@@ -1,0 +1,269 @@
+---
+title: "Analysis Of The House Sales Price in Ames"
+author: "Anqian Li"
+date: "3/17/2019"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+## The abstract
+- This research is to complete a Kaggle competition about predicting the house sale price in Ames using the provided dataset. Through this data analysis project, I first perform data cleaning with MICE package to impute missing data. Then, I conducted exploratory data anlaysis to visualise the impact of each categorical predictor to the house sales price, as well as the distribution of the numerical predictor. Lastly, I fitted the data with linear regression model, with cross validation and feature selection to help tune my model for a higher R2 in testing data.
+
+
+- My final $R^2$ for testing model is 0.9174 (from Kaggle) and my final $R^2$ for training model is 0.9537. 
+
+## Background information
+- We were given the dataset of the sale price of houses in Ames, Iowa and was asked to conduct a linear regression model to predict the sale price using the given 79 potential predictors. The dataset consists of 2500 observations with 79 predictors variables and one target variable Sale Price.
+
+- The observation unit: Each row is an observational unit. One row for each transaction history. 
+
+- Some common knowledge before we start: We know that the sale price of a house is generally related to the living area of the house. Also, the neighborhood where the house is located will influence the price of a house. We might also want to consider the age of the house, the number of rooms in the house and the condition of the basement, kitchen and so on.
+
+```{r, include=FALSE}
+library(corrplot)
+library(car)
+library(mice)
+library(ggplot2)
+house <- read.csv("HTrainW19Final.csv")
+```
+
+
+## Data Exploratory Analysis
+- All the visualization graphs and tables are omitted in this part. Please refer to the Rmarkdown file for the graphs and tables.
+
+- In this part, we will take a closer look at the data to find the potential influential predictors among the 79 variables. At first we would like to use the package mice to impute the missing data of the dataset, however, since there are so many predictors, the function does not work well. Hence, I decided to make a subset of the data containing the most contributed predictors before we deal with the missing data.
+
+- We first check the distribution of Sale Price and find that the Sale Price seems to be a little right skewed with some potential outliers. Hence we would remove the observations that have a house sale price greater than 450000, which makes us with 2481 observations now. 
+
+- Then I go on to split the variables to numerical and categorical and then check the correlation coefficients between the Sale price and each numerical predictors. After getting rid of the predictors that has a $r^2$ less than 0.5, we ended up getting the following numerical predictors: OverallQual; YearBuilt; YearRemodAdd; TotalBsmtSF; X1srFlrSF; GrLivArea; FullBath; GarageYrBlt; GarageCars; GarageArea. I find that GrLivArea is actually the sum of X1stFlrSF + X2ndFlrSF, hence, I decided to only keep Gali area. The size of Garage Area might include the information of GarageCars, hence I would only keep Garage Area.
+
+- After dealing with the numerical predictors, I perform some visualization of the categorical predictors using the ggplot2 library. In this part, we first check the variable neighborhoods and we see that there are 25 levels for the neighborhoods. I decide to split the 25 levels into 5 groups (High neighborhood; mid-high nbd; medium nbd; mid-low nbd; low nbd) based on their average prices and stored the results to a new predictor called nNei. As we go on to create boxplots and tables for the other categorical predictors, we find that the following categorical predictors might have an impact on the sale price of a house: nNei (the new neighborhood predictor); KitchenQual; BsmtExposure; BsmtQual; ExterQual. We also check the interaction plots of living area and neighborhoods and it seems like there would have an interaction term between living area and neighborhoods.
+
+- Then we create a subset of the original dataset which only includes the above-mentioned predictors and the SalePrice and use MICE to take care of all the missing values.
+
+
+```{r, include = FALSE}
+hist(house$SalePrice)
+# we can see that there are some outliers, we decide to delete the data with Sale price greater than 450000
+house <- house[house$SalePrice <= 450000,] # we now get 2481 data
+
+## see which numeric predictor is highly correlated with SalePrice
+indicate <- rep(NA,81)
+for(i in 1:81){
+  indicate[i] <- is.numeric(house[,i])
+}
+indicatehouse <- house[,indicate]
+tempcor <- rep(NA,38)
+for(i in 1:38){
+  tempcor[i] <- cor(indicatehouse[,i], house$SalePrice, use = 'complete.obs')
+}
+names(indicatehouse[,which(tempcor > 0.5)])
+
+corhouse <- house[,c("SalePrice","GrLivArea", "TotalBsmtSF","OverallQual","GarageArea","YearBuilt","YearRemodAdd","FullBath")]
+corrmat <- round(cor(corhouse, use = "complete.obs"), 4)
+par(mfrow=c(1,1))
+# correlation plots
+corrplot.mixed(corrmat)
+# scatter plots
+pairs(SalePrice~., data = corhouse)
+```
+
+
+```{r, include=FALSE}
+# Visualization for categorical predictors
+summary(house$Neighborhood)
+## since there are so many levels for Neighborhood, 
+## will seperate them into 5 groups based on their avearge Sale Price
+house$nNei <- ifelse(house$Neighborhood %in% c("Veenker","Timber","NridgHt","NoRidge","StoneBr"), "Hnbd", ifelse(house$Neighborhood %in% c("Blmngtn","Somerst","CollgCr","Crawfor","ClearCr"), "MHnbd", ifelse(house$Neighborhood %in% c("Blueste","Mitchel","NWAmes","SawyerW","Gilbert"), "Mnbd", ifelse(house$Neighborhood %in% c("NPkVill","OldTown","Sawyer","SWISU","NAmes"), "MLnbd", "Lnbd"))))
+
+ggplot(aes(x=nNei, y = SalePrice, fill = nNei), 
+       data = house) + geom_boxplot() + 
+  ggtitle('Side-by-side box plot for sales price wrt Neighborhood') +
+  xlab("NBH") + ylab("saleprice")
+
+# kitchenQual
+summary(house$KitchenQual) # there is 1 NA's, we might want to impute the NA then.
+ggplot(aes(x=KitchenQual, y = SalePrice, fill = KitchenQual), 
+       data = house) + geom_boxplot() + 
+  ggtitle('Side-by-side box plot for sales price wrt KitchenQual') +
+  xlab("KitchenQual") + ylab("saleprice")
+
+# Basement Exposure
+summary(house$BsmtExposure) # have NA's, impute after
+ggplot(aes(x=BsmtExposure, y = SalePrice, fill = BsmtExposure), 
+       data = house) + geom_boxplot()
+
+# BsmtQual
+summary(house$BsmtQual) # impute NA later
+ggplot(aes(x=BsmtQual, y = SalePrice, fill = BsmtQual), 
+       data = house) + geom_boxplot()
+
+# ExterQual
+summary(house$ExterQual)
+ggplot(aes(x=ExterQual, y = SalePrice, fill = ExterQual), 
+       data = house) + geom_boxplot()
+
+# interaction terms
+gg1<-ggplot(house, aes(x=house$GrLivArea, y=house$SalePrice, shape=house$nNei, color=house$nNei)) +geom_point()
+gg1+geom_smooth(method=lm)
+```
+
+
+```{r,include=FALSE}
+## imputing missing data
+house <- house[,c("SalePrice","GrLivArea", "TotalBsmtSF","YearRemodAdd","GarageArea",
+                   "MSSubClass","FullBath","nNei","ExterQual","BsmtQual","BsmtExposure",
+                   "OverallQual","KitchenQual")]
+tempData <- mice(house,m=5,maxit=15,meth='pmm')
+house <- complete(tempData,1)
+```
+
+## Data Modelling: (MLR)
+- In this part, we first split the data set into two parts: 70% training and 30% testing.
+
+- On the training data, we first conduct a linear regression model with all the predictors that we have chosen above and named it m1. The $R^2$ for m1 is 88.53%. We did notice that some predictors are not statistically significant in m1 and we have a multicollinearity issue because the vif for ExterQual, BsmtQual and KitchenQual are greater than 5. I decide to drop the predictor ExterQual since I find that ExterQual is highly correlated to BsmtQual and KitchenQual while BsmtQual and KitchenQual seem to be independent. After I drop the ExterQual and conduct a linear model m2 based on the rest of the predictors, I got an $R^2$ of 88.51% and all the vifs are below 5. We find that FullBath is not statistically significant and decide to remove it from our model. After we removed FulBath, we create m3, which has $R^2$ of 88.51%. We check the diagnostic graphs and find that the QQnorm plot looks bad as some points at the beginning and at the end are far from the qqline. The residual plot does not look good as well and we might have some potential influential points. Meanwhile, we would like to add some polynomial terms and interaction term to improve the model's $R^2$. We create m4 with the following predictors: poly(OverallQual, 2); MSSubClass; nNei * poly(GrLivArea, 2); GarageArea + BsmtExposure; KitchenQual; YearRemodAdd; BsmtQual; TotalBsmtSF. We added an interaction term between the neighborhood and living area as we spotted that there seems to have an association between these two predictors in EDA section. m4 has $R^2$ = 0.9252. The residual plot looks better than m3 but still needs improvement. The qqnorm still looks bad and we still have some influential points need to deal with. 
+
+- After some calculation, we find that m4 has 123 outliers and we decide to remove them (since our training set has 1737 observations, I think we can afford to lose 123 data.). I create a new model m5 with the same predictors as m4 but with the new training dataset. Let's see the model summary and diagnostic plots below.
+```{r, include = FALSE}
+set.seed(123)
+index <- sample(2481, size = 1737, replace = FALSE)
+train <- house[index,]
+test <- house[-index,]
+```
+
+```{r, include = FALSE}
+## model 1: full model
+m1 <- lm(SalePrice~., data = train)
+summary(m1)
+vif(m1)
+anova(m1)
+## m2: removing ExterQual
+names(train)
+train <- train[,-9]
+m2 <- lm(SalePrice~., data = train)
+summary(m2)
+vif(m2)
+anova(m2)
+## m3: removing FullBath
+names(train)
+train <- train[,-7]
+m3 <- lm(SalePrice~., data = train)
+summary(m3)
+vif(m3) # vif looks good
+anova(m3)
+par(mfrow=c(2,2))
+plot(m3)
+# try to improve the model by adding powers to the existing model and interaction terms
+m4 <- lm(SalePrice~poly(OverallQual,2)+MSSubClass+nNei*poly(GrLivArea,2)+GarageArea
+        + BsmtExposure + KitchenQual + YearRemodAdd
+        +BsmtQual+TotalBsmtSF,data = train)
+summary(m4) # R2 = 0.9252; R2 adj = 0.9239
+par(mfrow=c(2,2))
+plot(m4)  # might need to deal with bad leverage points later
+
+bad_lv <- which(cooks.distance(m4) > 4/(length(cooks.distance(m4))-30))
+length(bad_lv)  # 123
+train1 <- train[-bad_lv,]
+```
+
+```{r, echo=FALSE}
+vif(m3) # vif looks good
+m5 <- lm(SalePrice~poly(OverallQual,2)+MSSubClass+nNei*poly(GrLivArea,2)+GarageArea
+        + BsmtExposure + KitchenQual + YearRemodAdd
+        +BsmtQual+TotalBsmtSF,data = train1)
+summary(m5) # R2 = 0.9537, R2 adj = 0.9529 
+par(mfrow = c(2,2))
+plot(m5)
+```
+
+`We can see that the vif for each predictor are below 5. We have a decent R-squared of 0.9537 and Adjusted R-squared of 0.9529 in m5. Also, the residual plot looks good as the indicating line is approximately flat around 0 at y-axis and all the points scattered around it evenly. The Q-Q plot looks good as most of the points are aligned on qqline. The indicating line for the scaled plot is increasing slightly as the fitted values increased, but generally, it is acceptable. The last plot indicates that we still have a couple of influential points.`
+
+- We then perform stepwise selection to choose the best model (forward BIC), and the result with the lowest BIC is the full model, which is m5. Then we decide to test the performance m5 on our testing set. We use the initial model (m1) as a baseline since this is the model we first test on Kaggle and get a $R^2$ around 82%. The RSS of m1 we test on testing data is 573794102369 while the RSS of m5 we get is 461749601595, which decreased significantly. Hence, we would use the m5 as a reference to create a new model for the complete housing dataset that we got to predict the house sales price. We get a $R^2$ around 91% on Kaggle. 
+```{r, include=FALSE}
+## Perform step wise AIC/BIC to see the best model
+library(leaps)
+# mint <- lm(SalePrice~1, data = train)
+# forwardAIC <- step(mint, scope = 
+#                      list(lower=~1, 
+#                           upper=~poly(OverallQual,2)+
+#                           MSSubClass+nNei+
+#                             poly(GrLivArea,2)+
+#                             GarageArea + KitchenQual + 
+#                             BsmtExposure + YearRemodAdd +BsmtQual+
+#                             TotalBsmtSF), 
+#                    direction = "forward", data = train1, k = log(1614))
+
+## Test the performance of the data on the testing set
+# test model 1 as reference 
+prediction <- predict(m1 , newdata = test)
+RSS <- sum((house$SalePrice[-index] - prediction)^2)
+RSS #573794102369
+
+prediction <- predict(m5 , newdata = test)
+RSS <- sum((house$SalePrice[-index] - prediction)^2)
+RSS #461749601595
+```
+
+```{r, include = FALSE}
+## 91%;
+house <- read.csv("HTrainW19Final.csv")
+house$nNei <- ifelse(house$Neighborhood %in% c("Veenker","Timber","NridgHt","NoRidge","StoneBr"), "Hnbd", ifelse(house$Neighborhood %in% c("Blmngtn","Somerst","CollgCr","Crawfor","ClearCr"), "MHnbd", ifelse(house$Neighborhood %in% c("Blueste","Mitchel","NWAmes","SawyerW","Gilbert"), "Mnbd", ifelse(house$Neighborhood %in% c("NPkVill","OldTown","Sawyer","SWISU","NAmes"), "MLnbd", "Lnbd"))))
+
+house1 <- house[,c("SalePrice","GrLivArea", "TotalBsmtSF","YearRemodAdd","GarageArea",
+                   "MSSubClass","nNei","ExterQual","BsmtQual","BsmtExposure",
+                   "OverallQual","KitchenQual")]
+
+tempData <- mice(house1,m=5,maxit=15,meth='pmm')
+house1 <- complete(tempData,1)
+
+names(house1)
+house2 <- house1
+vif(lm(SalePrice~OverallQual+MSSubClass+nNei+GrLivArea+GarageArea
+        + BsmtExposure + KitchenQual+ YearRemodAdd
+        +BsmtQual+TotalBsmtSF,data = house2)) # Vif looks good
+
+m1 <- lm(SalePrice~poly(OverallQual,2)+MSSubClass+nNei*poly(GrLivArea,2)+GarageArea
+        + BsmtExposure + KitchenQual
+        +BsmtQual+TotalBsmtSF,data = house2)
+summary(m1)
+
+
+bad_lv <- which(cooks.distance(m1) > 4/(length(cooks.distance(m1))-29))
+length(bad_lv)
+
+house3 <- house2[-bad_lv,]
+
+m2 <- lm(SalePrice~poly(OverallQual,2)+MSSubClass+nNei*poly(GrLivArea,2)+GarageArea
+        + BsmtExposure + KitchenQual
+        +BsmtQual+TotalBsmtSF, data = house3)
+
+summary(m2)
+plot(m2)
+
+names(house3)
+
+test <- read.csv("HTestW19Final_No_Y_values.csv")
+# test$tlivarea <- log(test$GrLivArea)
+test$nNei <- ifelse(test$Neighborhood %in% c("Veenker","Timber","NridgHt","NoRidge","StoneBr"), "Hnbd", ifelse(test$Neighborhood %in% c("Blmngtn","Somerst","CollgCr","Crawfor","ClearCr"), "MHnbd", ifelse(test$Neighborhood %in% c("Blueste","Mitchel","NWAmes","SawyerW","Gilbert"), "Mnbd", ifelse(test$Neighborhood %in% c("NPkVill","OldTown","Sawyer","SWISU","NAmes"), "MLnbd", "Lnbd"))))
+## take care of the missing values
+test_subset <- test[,names(house3)[-1]]
+names(test_subset)
+
+# Imputing the missing data
+tempData <- mice(test_subset,m=5,maxit=15,meth='pmm')
+test_subset <- complete(tempData,1)
+
+prediction <- predict(m2, newdata = test_subset)
+summary(prediction)
+summary(house$SalePrice)
+df1 <- data.frame(Ob = 1:1500, SalePrice = prediction)
+
+df1
+# write.csv(df1, file = "myprediction.csv", row.names = FALSE)
+```
+
+
+## Summary
+- Eventually, we decide to use OverallQual, MSSubClass, Neighborhood, GrLivArea, GarageArea, BsmtExposure, KitchenQual, BsmtQual, and TotalBsmtSF as our predictor to predict the house sales price. In fact, besides the above attempts, I have tried several different combinations of predictors to predict the house sales price but fail (getting an even lower $R^2$ on Kaggle than my first try. Our final model is still not good enough since some of my fellow classmates use only 4 predictors to get a similar $R^2$ with mine. If I were given more time to complete this project, I would explore combinations of the predictors or see if I can create some new predictors based on the existing predictors that might help create a valid model with decent $R^2$ but much simpler than my current final version.
